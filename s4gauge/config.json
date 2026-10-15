@@ -1,0 +1,9 @@
+{
+  "oil_temp": {
+    "tx": "7E0",
+    "rx": "7E8",
+    "request": "",
+    "formula": "A-40"
+  },
+  "oil_limits_c": { "cold": 70, "high": 120, "critical": 130 }
+}

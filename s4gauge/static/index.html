@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>S4 Cockpit</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@300;400;500;600&display=swap">
+<style>
+/* Layout: an instrument cluster. Tach | oil-temp hero | speedo across the top,
+   a load strip under it, and a tabbed info panel like the cluster's own menus.
+   Deliberately single dark theme: it lives in a dark cabin, day and night. */
+:root {
+  color-scheme: dark;
+  --ground:   #060708;   /* cabin black */
+  --panel:    #0d0f12;   /* raised instrument face */
+  --hair:     #22262c;   /* hairlines, unlit ticks */
+  --ink:      #eceef1;   /* lit numerals */
+  --ink-2:    #9aa1ab;   /* labels */
+  --ink-3:    #5c636d;   /* units, inactive */
+  --red:      #f0233f;   /* the one accent: redline, needles, critical */
+  --cold:     #4d9fff;   /* oil below working temp */
+  --amber:    #ffb020;   /* oil high */
+  --font: "Barlow Semi Condensed", -apple-system, "SF Pro Display", system-ui, "Helvetica Neue", Arial, sans-serif;
+}
+html, body { min-height: 100%; }
+body > * { flex-shrink: 0; }
+body {
+  background: var(--ground); color: var(--ink); font-family: var(--font);
+  font-weight: 400; font-variant-numeric: tabular-nums; -webkit-user-select: none; user-select: none;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 8px 12px; box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 10px;
+  -webkit-tap-highlight-color: transparent;
+}
+* { box-sizing: border-box; }
+button { font: inherit; color: inherit; }
+button:focus-visible { outline: 2px solid var(--ink-2); outline-offset: 2px; }
+
+/* ---------- top bar ---------- */
+.bar { display: flex; align-items: center; gap: 12px; font-size: 13px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-2); }
+.mark { font-weight: 600; color: var(--ink); letter-spacing: .2em; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border: 1px solid var(--hair); border-radius: 999px; font-size: 11px; }
+.pill i { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); }
+.pill.live i { background: var(--ink); box-shadow: 0 0 6px var(--ink); }
+.pill.demo i { background: var(--amber); }
+.pill.err i { background: var(--red); }
+.pill.err { color: var(--ink); border-color: var(--red); }
+#statusText { text-transform: none; letter-spacing: .02em; font-size: 12px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+#clock { color: var(--ink); letter-spacing: .08em; font-size: 15px; }
+#unit { background: none; border: 1px solid var(--hair); border-radius: 6px; padding: 4px 10px; letter-spacing: .1em; cursor: pointer; }
+
+/* ---------- cluster ---------- */
+.cluster { display: grid; gap: 4px; align-items: center;
+  grid-template-columns: 1fr 1.3fr 1fr; grid-template-areas: "tach oil speed"; }
+.dial { grid-area: tach; position: relative; width: 100%; max-width: min(100%, 58vh); justify-self: center; }
+#speedDial { grid-area: speed; }
+.dial svg, .oil svg { display: block; width: 100%; height: auto; }
+.dial .read { position: absolute; left: 0; right: 0; top: 60%; text-align: center; }
+.dial .big { font-size: clamp(22px, 3.8vw, 40px); font-weight: 300; line-height: 1; }
+.dial .sub { font-size: 11px; letter-spacing: .18em; color: var(--ink-3); text-transform: uppercase; margin-top: 4px; }
+
+.oil { grid-area: oil; position: relative; width: 100%; max-width: min(100%, 78vh); justify-self: center; }
+.oil .read { position: absolute; inset: 21% 0 auto; text-align: center; }
+.oil .lbl { font-size: 12px; letter-spacing: .3em; color: var(--ink-2); text-transform: uppercase; }
+.oil .val { font-size: clamp(56px, 11vw, 112px); font-weight: 300; line-height: .95; transition: color .6s; }
+.oil .val sup { font-size: .32em; font-weight: 400; vertical-align: top; position: relative; top: .35em; color: var(--ink-2); }
+.state { display: inline-block; margin-top: 6px; padding: 3px 10px; border-radius: 3px; font-size: 11px; font-weight: 600; letter-spacing: .2em; text-transform: uppercase; border: 1px solid currentColor; }
+.oil .meta { margin-top: -4px; display: flex; justify-content: center; gap: 18px; font-size: 12px; color: var(--ink-3); letter-spacing: .08em; }
+.oil .meta b { color: var(--ink-2); font-weight: 500; }
+.trend { margin: 2px 18% 0; }
+.trend svg { height: 28px; }
+.trend .cap { display: flex; justify-content: space-between; font-size: 10px; letter-spacing: .14em; color: var(--ink-3); text-transform: uppercase; }
+
+/* ---------- load strip ---------- */
+.strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; padding: 10px 2px; border-top: 1px solid var(--hair); border-bottom: 1px solid var(--hair); }
+.meter .top { display: flex; justify-content: space-between; align-items: baseline; }
+.meter .k { font-size: 11px; letter-spacing: .18em; color: var(--ink-2); text-transform: uppercase; }
+.meter .v { font-size: 22px; font-weight: 400; }
+.meter .v small { font-size: 12px; color: var(--ink-3); margin-left: 3px; }
+.track { position: relative; height: 4px; margin-top: 6px; background: var(--hair); border-radius: 2px; overflow: hidden; }
+.track .fill { position: absolute; top: 0; bottom: 0; left: 0; width: 0; background: var(--ink); border-radius: 2px; transition: width .12s linear, left .12s linear; }
+.track .zero { position: absolute; top: -3px; bottom: -3px; width: 1px; background: var(--ink-3); }
+.scale { display: flex; justify-content: space-between; font-size: 10px; color: var(--ink-3); margin-top: 3px; }
+
+/* ---------- info panel ---------- */
+.tabs { display: flex; gap: 22px; border-bottom: 1px solid var(--hair); overflow-x: auto; scrollbar-width: none; }
+.tabs button { background: none; border: 0; padding: 8px 0 9px; font-size: 13px; letter-spacing: .2em; text-transform: uppercase; color: var(--ink-3); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--red); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); padding-top: 4px; }
+.cell { padding: 10px 14px 10px 0; border-bottom: 1px solid var(--hair); min-width: 0; }
+.cell .k { font-size: 11px; letter-spacing: .16em; color: var(--ink-2); text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cell .v { font-size: 30px; font-weight: 300; line-height: 1.15; }
+.cell .v small { font-size: 13px; color: var(--ink-3); margin-left: 4px; font-weight: 400; }
+.cell.na .v { color: var(--ink-3); }
+.cell .note { font-size: 11px; color: var(--ink-3); }
+.cell .mini { position: relative; height: 3px; background: var(--hair); margin-top: 6px; }
+.cell .mini b { position: absolute; top: -2px; bottom: -2px; background: var(--ink-2); }
+.cell .mini i { position: absolute; left: 50%; top: -4px; bottom: -4px; width: 1px; background: var(--ink-3); }
+
+.scenes { display: flex; align-items: center; gap: 4px 16px; flex-wrap: wrap; font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--ink-3); }
+.scenes .lab { color: var(--amber); }
+.scenes button { background: none; border: 0; padding: 4px 0; letter-spacing: inherit; text-transform: inherit; font-size: inherit; color: var(--ink-3); cursor: pointer; border-bottom: 2px solid transparent; }
+.scenes button[aria-pressed="true"] { color: var(--ink); border-bottom-color: var(--amber); }
+.scenes .prog { flex: 1; min-width: 60px; height: 2px; background: var(--hair); position: relative; }
+.scenes .prog b { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--ink-3); }
+body.stale .cluster, body.stale .strip, body.stale .grid { opacity: .35; transition: opacity .4s; }
+
+/* phone portrait: oil on top, two small dials under it */
+@media (max-aspect-ratio: 1/1) {
+  .cluster { grid-template-columns: 1fr 1fr; grid-template-areas: "oil oil" "tach speed"; row-gap: 0; }
+  .strip { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 12px; }
+  .dial .big { font-size: clamp(20px, 7vw, 32px); }
+  .oil .val { font-size: clamp(64px, 22vw, 110px); }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}</style>
+</head>
+<body>
+<header class="bar">
+  <span class="mark">S4</span>
+  <span class="pill" id="pill"><i></i><span id="pillText">Connecting</span></span>
+  <span id="statusText"></span>
+  <span id="clock">--:--</span>
+  <button id="unit" type="button" aria-label="Switch units">°F · MPH</button>
+</header>
+
+<div class="scenes" id="scenes" hidden></div>
+
+<section class="cluster">
+  <div class="dial" id="tachDial">
+    <svg viewBox="0 0 240 240" aria-label="Engine speed"></svg>
+    <div class="read"><div class="big" id="rpmVal">0</div><div class="sub">rpm</div></div>
+  </div>
+
+  <div class="oil">
+    <svg viewBox="0 0 320 232" aria-label="Oil temperature"></svg>
+    <div class="read">
+      <div class="lbl">Oil temp</div>
+      <div class="val" id="oilVal">--<sup id="oilUnit">°F</sup></div>
+      <span class="state" id="oilState">No data</span>
+    </div>
+    <div class="meta"><span>Peak <b id="oilPeak">--</b></span><span>Coolant <b id="oilCool">--</b></span></div>
+    <div class="trend">
+      <svg viewBox="0 0 220 40" preserveAspectRatio="none" id="trend" aria-label="Oil temperature, last 10 minutes"></svg>
+      <div class="cap"><span id="trendCap">−10 min</span><span>now</span></div>
+    </div>
+  </div>
+
+  <div class="dial" id="speedDial">
+    <svg viewBox="0 0 240 240" aria-label="Vehicle speed"></svg>
+    <div class="read"><div class="big" id="spdVal">0</div><div class="sub" id="spdUnit">mph</div></div>
+  </div>
+</section>
+
+<section class="strip" id="strip"></section>
+
+<nav class="tabs" role="tablist" id="tabs"></nav>
+<section class="grid" id="grid" role="tabpanel"></section>
+
+<script>
+/* ===== configuration (°C internally, like the Pi sends) ===== */
+const REDLINE = 6500, RPM_MAX = 7000;          // tach red band; adjust to your car
+const OIL_SCALE = [20, 150];                   // oil arc sweep, °C
+const DEFAULT_LIMITS = { cold: 70, high: 120, critical: 130 };
+
+const PANELS = {
+  Temperatures: ["coolant", "iat", "ambient", "cat_b1", "cat_b2"],
+  Engine: ["timing", "maf", "load", "map", "runtime"],
+  Fuel: ["fuel", "stft1", "ltft1", "stft2", "ltft2"],
+  System: ["volts", "baro", "_age", "_channels"],
+};
+const LABELS = {
+  coolant: "Coolant", iat: "Intake air", ambient: "Ambient", cat_b1: "Catalyst B1", cat_b2: "Catalyst B2",
+  timing: "Ignition timing", maf: "Air flow (MAF)", load: "Engine load", map: "Manifold pressure", runtime: "Run time",
+  fuel: "Fuel level", stft1: "Short trim B1", ltft1: "Long trim B1", stft2: "Short trim B2", ltft2: "Long trim B2",
+  volts: "Battery", baro: "Barometric", _age: "Data age", _channels: "ECU channels",
+};
+
+/* ===== units ===== */
+let imperial = true;
+try { imperial = localStorage.getItem("units") !== "metric"; } catch (e) {}
+const T = c => imperial ? c * 9 / 5 + 32 : c;
+const TU = () => imperial ? "°F" : "°C";
+function fmt(key, v) {
+  if (v == null || Number.isNaN(v)) return null;
+  switch (key) {
+    case "coolant": case "iat": case "ambient": case "cat_b1": case "cat_b2":
+      return [Math.round(T(v)), TU()];
+    case "timing": return [v.toFixed(1), "°"];
+    case "maf": return [v.toFixed(1), "g/s"];
+    case "load": case "fuel": return [Math.round(v), "%"];
+    case "map": case "baro": return [imperial ? (v * 0.145038).toFixed(1) : Math.round(v), imperial ? "psi" : "kPa"];
+    case "stft1": case "ltft1": case "stft2": case "ltft2": return [(v > 0 ? "+" : "") + v.toFixed(1), "%"];
+    case "volts": return [v.toFixed(1), "V"];
+    case "runtime": { const m = Math.floor(v / 60); return [m + ":" + String(Math.round(v % 60)).padStart(2, "0"), "min"]; }
+    case "_age": return [v.toFixed(1), "s"];
+    case "_channels": return [v, ""];
+  }
+  return [v, ""];
+}
+
+/* ===== SVG helpers ===== */
+const NS = "http://www.w3.org/2000/svg";
+const el = (tag, attrs, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); parent && parent.appendChild(e); return e; };
+const polar = (cx, cy, r, deg) => [cx + r * Math.cos((deg - 90) * Math.PI / 180), cy + r * Math.sin((deg - 90) * Math.PI / 180)];
+function arcPath(cx, cy, r, a0, a1) {
+  const [x0, y0] = polar(cx, cy, r, a0), [x1, y1] = polar(cx, cy, r, a1);
+  return `M${x0} ${y0}A${r} ${r} 0 ${a1 - a0 > 180 ? 1 : 0} 1 ${x1} ${y1}`;
+}
+
+/* A round dial: fine minor ticks, heavier majors with numerals, optional red band, a red needle. */
+function buildDial(svg, { max, major, minor, red, numeral }) {
+  svg.innerHTML = "";
+  const cx = 120, cy = 120, A0 = -135, A1 = 135, ang = v => A0 + (A1 - A0) * v / max;
+  el("circle", { cx, cy, r: 112, fill: "var(--panel)", stroke: "var(--hair)", "stroke-width": 1 }, svg);
+  if (red) el("path", { d: arcPath(cx, cy, 104, ang(red), A1), fill: "none", stroke: "var(--red)", "stroke-width": 4 }, svg);
+  for (let v = 0; v <= max + 1e-9; v += minor) {
+    const isMajor = Math.abs(v / major - Math.round(v / major)) < 1e-6;
+    const [x0, y0] = polar(cx, cy, 100, ang(v)), [x1, y1] = polar(cx, cy, isMajor ? 88 : 94, ang(v));
+    el("line", { x1: x0, y1: y0, x2: x1, y2: y1, stroke: red && v >= red ? "var(--red)" : (isMajor ? "var(--ink)" : "var(--ink-3)"), "stroke-width": isMajor ? 2 : 1 }, svg);
+    if (isMajor) {
+      const [tx, ty] = polar(cx, cy, 74, ang(v));
+      const t = el("text", { x: tx, y: ty + 5, "text-anchor": "middle", fill: "var(--ink-2)", "font-size": 14, "font-family": "inherit" }, svg);
+      t.textContent = numeral(v);
+    }
+  }
+  const needle = el("g", {}, svg);
+  el("line", { x1: cx, y1: cy - 30, x2: cx, y2: cy - 102, stroke: "var(--red)", "stroke-width": 3, "stroke-linecap": "round" }, needle);
+  el("circle", { cx, cy, r: 6, fill: "var(--ground)", stroke: "var(--hair)" }, svg);
+  return v => needle.setAttribute("transform", `rotate(${ang(Math.max(0, Math.min(max, v)))} ${cx} ${cy})`);
+}
+
+let setTach, setSpeed;
+function buildDials() {
+  setTach = buildDial(document.querySelector("#tachDial svg"), { max: RPM_MAX, major: 1000, minor: 250, red: REDLINE, numeral: v => v / 1000 });
+  const smax = imperial ? 180 : 280;
+  setSpeed = buildDial(document.querySelector("#speedDial svg"), { max: smax, major: imperial ? 20 : 40, minor: imperial ? 10 : 20, numeral: v => v });
+  document.getElementById("spdUnit").textContent = imperial ? "mph" : "km/h";
+}
+
+/* Oil hero arc: 240° sweep, zone bands on the outer rim, lit progress inside. */
+let oilArc, oilTip, limits = DEFAULT_LIMITS;
+const OA0 = -120, OA1 = 120, ocx = 160, ocy = 150;
+const oAng = c => OA0 + (OA1 - OA0) * Math.max(0, Math.min(1, (c - OIL_SCALE[0]) / (OIL_SCALE[1] - OIL_SCALE[0])));
+function buildOil() {
+  const svg = document.querySelector(".oil svg"); svg.innerHTML = "";
+  el("path", { d: arcPath(ocx, ocy, 128, OA0, OA1), fill: "none", stroke: "var(--hair)", "stroke-width": 10 }, svg);
+  el("path", { d: arcPath(ocx, ocy, 140, OA0, oAng(limits.cold)), fill: "none", stroke: "var(--cold)", "stroke-width": 2, opacity: .7 }, svg);
+  el("path", { d: arcPath(ocx, ocy, 140, oAng(limits.high), oAng(limits.critical)), fill: "none", stroke: "var(--amber)", "stroke-width": 2 }, svg);
+  el("path", { d: arcPath(ocx, ocy, 140, oAng(limits.critical), OA1), fill: "none", stroke: "var(--red)", "stroke-width": 2 }, svg);
+  // ticks at round numbers in the unit being shown
+  const step = imperial ? 10 : 5, majorStep = imperial ? 50 : 25;
+  const lo = T(OIL_SCALE[0]), hi = T(OIL_SCALE[1]);
+  for (let d = Math.ceil(lo / step) * step; d <= hi; d += step) {
+    const c = imperial ? (d - 32) * 5 / 9 : d, major = d % majorStep === 0;
+    const [x0, y0] = polar(ocx, ocy, 118, oAng(c)), [x1, y1] = polar(ocx, ocy, major ? 108 : 113, oAng(c));
+    el("line", { x1: x0, y1: y0, x2: x1, y2: y1, stroke: major ? "var(--ink-2)" : "var(--ink-3)", "stroke-width": 1 }, svg);
+    if (major) {
+      const [tx, ty] = polar(ocx, ocy, 152, oAng(c));
+      const t = el("text", { x: tx, y: ty + 4, "text-anchor": "middle", fill: "var(--ink-3)", "font-size": 11, "font-family": "inherit" }, svg);
+      t.textContent = d;
+    }
+  }
+  oilArc = el("path", { d: "", fill: "none", stroke: "var(--ink)", "stroke-width": 10 }, svg);
+  oilTip = el("circle", { r: 7, fill: "var(--ground)", stroke: "var(--ink)", "stroke-width": 2.5, cx: -99, cy: -99 }, svg);
+}
+
+/* ===== load strip ===== */
+const METERS = [
+  { key: "boost", k: "Boost", min: -10, max: 15, unit: "psi", signed: true },
+  { key: "throttle", k: "Throttle", min: 0, max: 100, unit: "%" },
+  { key: "pedal", k: "Pedal", min: 0, max: 100, unit: "%" },
+  { key: "load", k: "Load", min: 0, max: 100, unit: "%" },
+];
+function buildStrip() {
+  const s = document.getElementById("strip");
+  s.innerHTML = METERS.map(m => `<div class="meter" id="m-${m.key}">
+    <div class="top"><span class="k">${m.k}</span><span class="v">--<small>${m.unit}</small></span></div>
+    <div class="track"><span class="fill"></span>${m.signed ? `<span class="zero" style="left:${(-m.min) / (m.max - m.min) * 100}%"></span>` : ""}</div>
+    <div class="scale"><span>${m.min}</span><span>${m.max}</span></div></div>`).join("");
+}
+function setMeter(m, v) {
+  const box = document.getElementById("m-" + m.key);
+  const val = box.querySelector(".v"), fill = box.querySelector(".fill");
+  if (v == null) { val.firstChild.nodeValue = "--"; fill.style.width = "0"; return; }
+  val.firstChild.nodeValue = m.signed ? (v > 0 ? "+" : "") + v.toFixed(1) : Math.round(v);
+  const p = x => Math.max(0, Math.min(1, (x - m.min) / (m.max - m.min))) * 100;
+  if (m.signed) { const z = p(0), q = p(v); fill.style.left = Math.min(z, q) + "%"; fill.style.width = Math.abs(q - z) + "%";
+    fill.style.background = v > 0 ? "var(--ink)" : "var(--ink-3)"; }
+  else { fill.style.left = "0"; fill.style.width = p(v) + "%"; }
+}
+
+/* ===== tabs + info grid ===== */
+let tab = "Temperatures";
+try { tab = localStorage.getItem("tab") || tab; } catch (e) {}
+if (!PANELS[tab]) tab = "Temperatures";
+function buildTabs() {
+  const t = document.getElementById("tabs");
+  t.innerHTML = Object.keys(PANELS).map(n => `<button type="button" role="tab" id="tab-${n}" aria-selected="${n === tab}">${n}</button>`).join("");
+  t.onclick = e => { const b = e.target.closest("button"); if (!b) return; tab = b.textContent;
+    try { localStorage.setItem("tab", tab); } catch (err) {} buildTabs(); buildGrid(); render(); };
+}
+function buildGrid() {
+  document.getElementById("grid").innerHTML = PANELS[tab].map(k => `<div class="cell" id="c-${k}">
+    <div class="k">${LABELS[k]}</div><div class="v">--</div>${/trim/.test(LABELS[k]) ? '<div class="mini"><i></i><b></b></div>' : ""}</div>`).join("");
+}
+
+/* ===== state + rendering ===== */
+let data = { status: "Connecting", values: {}, meta: {}, age: 99, oil_limits: DEFAULT_LIMITS };
+let mode = "connecting";       // connecting | live | demo | error
+let TREND_SPAN = 600;         // seconds shown in the oil trend
+const hist = [];               // [t, oil°C] for the trend, last 10 min
+let peak = -Infinity, shown = { rpm: 0, speed: 0 };
+
+function oilValue(v) { return v.oil ?? v.oil_std; }
+
+function render() {
+  const v = data.values, L = data.oil_limits || DEFAULT_LIMITS;
+  if (JSON.stringify(L) !== JSON.stringify(limits)) { limits = L; buildOil(); }
+
+  // status
+  const pill = document.getElementById("pill");
+  pill.className = "pill " + (mode === "live" ? "live" : mode === "demo" ? "demo" : mode === "error" ? "err" : "");
+  document.getElementById("pillText").textContent = { live: "Live", demo: "Demo data", error: "No data", connecting: "Connecting" }[mode];
+  document.getElementById("statusText").textContent = mode === "demo" ? demoNote : data.status || "";
+  document.body.classList.toggle("stale", mode !== "demo" && (mode !== "live" || data.age > 3));
+
+  // oil hero
+  const oil = oilValue(v);
+  const valEl = document.getElementById("oilVal"), stEl = document.getElementById("oilState");
+  if (oil != null) {
+    peak = Math.max(peak, oil);
+    const st = oil < L.cold ? ["Warming up", "var(--cold)"] : oil >= L.critical ? ["Critical", "var(--red)"] : oil >= L.high ? ["High", "var(--amber)"] : ["Normal", "var(--ink)"];
+    valEl.firstChild.nodeValue = Math.round(T(oil));
+    valEl.style.color = st[0] === "Normal" ? "var(--ink)" : st[1];
+    stEl.textContent = st[0]; stEl.style.color = st[1];
+    oilArc.setAttribute("d", arcPath(ocx, ocy, 128, OA0, Math.max(OA0 + 0.5, oAng(oil))));
+    oilArc.setAttribute("stroke", st[1]);
+    const [tx, ty] = polar(ocx, ocy, 128, oAng(oil)); oilTip.setAttribute("cx", tx); oilTip.setAttribute("cy", ty); oilTip.setAttribute("stroke", st[1]);
+    document.getElementById("oilPeak").textContent = Math.round(T(peak)) + TU();
+  } else {
+    valEl.firstChild.nodeValue = "--"; valEl.style.color = "var(--ink-3)";
+    stEl.textContent = mode === "live" ? "Oil code not set" : "No data"; stEl.style.color = "var(--ink-3)";
+  }
+  document.getElementById("oilUnit").textContent = TU();
+  document.getElementById("oilCool").textContent = v.coolant != null ? Math.round(T(v.coolant)) + TU() : "--";
+  drawTrend();
+
+  // strip
+  for (const m of METERS) setMeter(m, v[m.key]);
+
+  // grid
+  const extra = { _age: data.age, _channels: Object.keys(data.meta || {}).length || null };
+  for (const k of PANELS[tab]) {
+    const cell = document.getElementById("c-" + k); if (!cell) continue;
+    const raw = k in extra ? extra[k] : v[k], f = fmt(k, raw);
+    const supported = k in extra || mode === "demo" || !data.meta || k in data.meta || raw != null;
+    cell.classList.toggle("na", !f);
+    cell.querySelector(".v").innerHTML = f ? `${f[0]}<small>${f[1]}</small>` : (supported ? "--" : "—<small>not reported</small>");
+    const bar = cell.querySelector(".mini b");
+    if (bar) { const p = Math.max(-25, Math.min(25, raw || 0)) / 50 * 100;
+      bar.style.left = (p < 0 ? 50 + p : 50) + "%"; bar.style.width = Math.abs(p) + "%"; }
+  }
+}
+
+function drawTrend() {
+  const svg = document.getElementById("trend"); svg.innerHTML = "";
+  const now = performance.now() / 1000, span = TREND_SPAN;
+  const x = t => (1 - (now - t) / span) * 220, y = c => 38 - (Math.max(OIL_SCALE[0], Math.min(OIL_SCALE[1], c)) - OIL_SCALE[0]) / (OIL_SCALE[1] - OIL_SCALE[0]) * 36;
+  el("line", { x1: 0, x2: 220, y1: y(limits.high), y2: y(limits.high), stroke: "var(--amber)", "stroke-width": .75, "stroke-dasharray": "3 3", "vector-effect": "non-scaling-stroke", opacity: .7 }, svg);
+  const pts = hist.filter(p => now - p[0] <= span);
+  if (pts.length < 2) return;
+  const line = pts.map(p => `${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join(" ");
+  el("polygon", { points: `${x(pts[0][0])},40 ${line} ${x(pts.at(-1)[0])},40`, fill: "var(--ink)", opacity: .06 }, svg);
+  el("polyline", { points: line, fill: "none", stroke: "var(--ink-2)", "stroke-width": 1.5, "vector-effect": "non-scaling-stroke" }, svg);
+}
+
+/* Needles glide toward their target each frame instead of jumping at 10 Hz. */
+function animate() {
+  const v = data.values;
+  shown.rpm += ((v.rpm || 0) - shown.rpm) * 0.25;
+  const kmh = v.speed || 0; shown.speed += (kmh - shown.speed) * 0.2;
+  setTach(shown.rpm);
+  setSpeed(imperial ? shown.speed * 0.621371 : shown.speed);
+  document.getElementById("rpmVal").textContent = Math.round((v.rpm || 0) / 10) * 10;
+  document.getElementById("spdVal").textContent = Math.round(imperial ? kmh * 0.621371 : kmh);
+  requestAnimationFrame(animate);
+}
+
+function ingest(msg) {
+  data = msg;
+  const oil = oilValue(msg.values || {});
+  const t = performance.now() / 1000;
+  if (oil != null && (!hist.length || t - hist.at(-1)[0] >= (TREND_SPAN < 300 ? 0.5 : 2))) { hist.push([t, oil]); while (hist.length > 400) hist.shift(); }
+  render();
+}
+
+/* ===== data sources ===== */
+function connect() {
+  const ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onmessage = e => { mode = "live"; ingest(JSON.parse(e.data)); };
+  ws.onclose = () => { mode = "error"; data.status = "Lost connection to the Pi. Retrying…"; data.age = 99; render(); setTimeout(connect, 1000); };
+}
+
+/* Guided demo: five scenes that show every state of the oil gauge.
+   Plays as a tour; tap a scene to hold it, tap Tour to resume. */
+let demoNote = "Simulated drive. On the Pi this shows your car.";
+const SCENES = [
+  { id: "cold", name: "Cold start", note: "Time-lapse: a 15-minute warm-up in 20 seconds", secs: 20, oil: 92, rate: 4.2, cool: 90,
+    drive: t => ({ thr: 10 + 8 * Math.max(0, Math.sin(t / 2)), rpm: 1100 + 900 * Math.max(0, Math.sin(t / 2)), speed: Math.min(45, t * 3) }) },
+  { id: "city", name: "City", note: "Stop-and-go traffic, oil in the normal range", secs: 14, oil: 98, rate: 0.6, cool: 91,
+    drive: t => { const c = (t % 9) / 9, go = c < 0.6; return { thr: go ? 30 * Math.sin(c / 0.6 * Math.PI) : 0, rpm: go ? 1200 + 2200 * Math.sin(c / 0.6 * Math.PI) : 750, speed: go ? 50 * Math.sin(c / 0.6 * Math.PI / 2) : Math.max(0, 50 * (1 - (c - 0.6) / 0.4)) }; } },
+  { id: "highway", name: "Highway", note: "Steady cruise at 115 km/h (71 mph)", secs: 12, oil: 104, rate: 0.6, cool: 92,
+    drive: t => ({ thr: 22 + 3 * Math.sin(t), rpm: 2350 + 60 * Math.sin(t), speed: 115 + 2 * Math.sin(t / 3) }) },
+  { id: "spirited", name: "Spirited", note: "Pulls to the redline: boost, load and oil temp climb", secs: 16, oil: 121, rate: 1.4, cool: 95,
+    drive: t => { const c = (t % 5) / 5, pull = c < 0.7; return { thr: pull ? 98 : 5, rpm: pull ? 3200 + 3500 * (c / 0.7) : 4300 - 900 * ((c - 0.7) / 0.3), speed: 80 + 50 * ((t % 15) / 15) }; } },
+  { id: "overheat", name: "Overheat", note: "What a warning looks like: oil passes the high and critical limits", secs: 14, oil: 137, rate: 2.2, cool: 101,
+    drive: t => { const c = (t % 5) / 5, pull = c < 0.7; return { thr: pull ? 98 : 5, rpm: pull ? 3500 + 3200 * (c / 0.7) : 4300, speed: 120 + 10 * Math.sin(t / 2) }; } },
+];
+function demo() {
+  mode = "demo"; TREND_SPAN = 90;
+  document.getElementById("trendCap").textContent = "−90 s";
+  const bar = document.getElementById("scenes"); bar.hidden = false;
+  bar.innerHTML = '<span class="lab">Demo</span>' + SCENES.map(sc => `<button type="button" id="sc-${sc.id}" aria-pressed="false">${sc.name}</button>`).join("")
+    + '<span class="prog"><b id="scProg"></b></span><button type="button" id="sc-tour" aria-pressed="true">Tour</button>';
+  let idx = 0, touring = true, sceneT = 0, oil = 12, cool = 14, fuel = 62, run = 0;
+  const enter = i => {
+    idx = i; sceneT = 0;
+    const sc = SCENES[idx];
+    if (sc.id === "cold") { oil = 12; cool = 14; hist.length = 0; peak = -Infinity; }
+    demoNote = sc.note;
+    for (const b of bar.querySelectorAll("button")) b.setAttribute("aria-pressed", String(b.id === "sc-" + sc.id || (b.id === "sc-tour" && touring)));
+  };
+  bar.onclick = e => {
+    const b = e.target.closest("button"); if (!b) return;
+    if (b.id === "sc-tour") { touring = !touring; if (touring) enter(0); else enter(idx); return; }
+    touring = false; enter(SCENES.findIndex(sc => "sc-" + sc.id === b.id));
+  };
+  enter(0);
+  setInterval(() => {
+    const dt = 0.1, sc = SCENES[idx];
+    sceneT += dt; run += dt;
+    if (touring && sceneT >= sc.secs) enter((idx + 1) % SCENES.length);
+    document.getElementById("scProg").style.width = (touring ? Math.min(1, sceneT / SCENES[idx].secs) * 100 : 0) + "%";
+    const d = SCENES[idx].drive(sceneT);
+    const step = (cur, tgt, rate) => cur + Math.sign(tgt - cur) * Math.min(Math.abs(tgt - cur), rate * dt);
+    oil = step(oil, SCENES[idx].oil, SCENES[idx].rate);
+    cool = step(cool, SCENES[idx].cool, SCENES[idx].id === "cold" ? 5 : 0.8);
+    fuel = Math.max(5, fuel - 0.0006);
+    const map = d.thr > 60 ? 101 + d.thr * 0.62 : 28 + d.thr * 1.6;   // supercharger makes boost only near full throttle
+    ingest({
+      status: "demo", age: 0.1, oil_limits: DEFAULT_LIMITS, meta: { rpm: 1 },
+      values: {
+        rpm: d.rpm, speed: d.speed, oil, coolant: cool, iat: 30 + d.thr / 6 + (oil > 120 ? 8 : 0), ambient: 19,
+        cat_b1: 380 + oil * 2 + d.thr * 2.5, cat_b2: 372 + oil * 2 + d.thr * 2.5,
+        throttle: d.thr, pedal: Math.min(100, d.thr * 1.02), load: 15 + d.thr * 0.8, boost: (map - 101) * 0.145038, map, baro: 101,
+        timing: 28 - d.thr / 5, maf: 6 + d.thr * 1.8 * (d.rpm / 4000), runtime: 30 + run, fuel,
+        stft1: 1.5 * Math.sin(run * 1.3), stft2: -1.2 * Math.sin(run * 1.1), ltft1: 2.3, ltft2: -0.8, volts: d.rpm > 900 ? 14.1 : 13.9,
+      },
+    });
+  }, 100);
+}
+
+/* ===== boot ===== */
+function clock() { const d = new Date(); document.getElementById("clock").textContent = d.getHours() + ":" + String(d.getMinutes()).padStart(2, "0"); }
+document.getElementById("unit").onclick = () => {
+  imperial = !imperial; try { localStorage.setItem("units", imperial ? "imperial" : "metric"); } catch (e) {}
+  document.getElementById("unit").textContent = imperial ? "°F · MPH" : "°C · KM/H";
+  buildDials(); buildOil(); render();
+};
+document.getElementById("unit").textContent = imperial ? "°F · MPH" : "°C · KM/H";
+buildDials(); buildOil(); buildStrip(); buildTabs(); buildGrid(); render(); clock();
+setInterval(clock, 10000); setInterval(drawTrend, 1000);
+requestAnimationFrame(animate);
+// Served by the Pi over http -> live data. Opened anywhere else (https preview) or with ?demo -> simulation.
+if (location.protocol === "https:" || new URLSearchParams(location.search).has("demo") || location.protocol === "file:") demo(); else connect();
+// Keep the screen on where the browser allows it (https only).
+async function wake() { try { await navigator.wakeLock?.request("screen"); } catch (e) {} }
+document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && wake());
+wake();
+</script>
+
+</body>
+</html>
