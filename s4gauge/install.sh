@@ -8,7 +8,10 @@ if [ ${#PASS} -lt 8 ]; then
   echo "  bash ~/s4gauge/install.sh mysecret123"
   exit 1
 fi
+# Works wherever the files were downloaded; ~/s4gauge always points at them.
+SRC="$(cd "$(dirname "$0")" && pwd)"
 DIR="$HOME/s4gauge"
+if [ "$SRC" != "$DIR" ]; then ln -sfn "$SRC" "$DIR"; fi
 
 echo "== 1/4 Installing software (takes a few minutes) =="
 sudo apt-get update

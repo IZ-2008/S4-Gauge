@@ -22,16 +22,21 @@ Demo video: [`docs/s4-cockpit-demo.mp4`](docs/s4-cockpit-demo.mp4) (cold start â
 
 ## Install
 
+Full beginner walkthrough: see the step-by-step setup guide shared with this project. In short:
+
 1. Flash **Raspberry Pi OS Lite (64-bit)** with Raspberry Pi Imager: hostname `s4gauge`, user `pi`, your home Wi-Fi, SSH enabled.
-2. Copy the `s4gauge` folder to `/home/pi/s4gauge` on the Pi.
-3. Run the installer with a password for the gauge's Wi-Fi (8+ characters), then reboot:
+2. Connect with `ssh pi@s4gauge.local`, then download and install, giving a password (8+ characters) for the gauge's Wi-Fi:
 
    ```bash
-   bash ~/s4gauge/install.sh YOUR-HOTSPOT-PASSWORD
+   sudo apt install -y git
+   git clone https://github.com/IZ-2008/S4-Gauge.git ~/S4-Gauge
+   bash ~/S4-Gauge/s4gauge/install.sh YOUR-HOTSPOT-PASSWORD
    sudo reboot
    ```
 
-4. On the phone, join the Wi-Fi **S4-Gauge** and open `http://10.42.0.1`.
+3. On the phone, join the Wi-Fi **S4-Gauge** and open `http://10.42.0.1`.
+
+To update later (with the Pi on the internet): `cd ~/S4-Gauge && git pull && sudo systemctl restart s4gauge`.
 
 Try the dashboard without the car: `python3 ~/s4gauge/gauge.py --demo --http 8080`, or open `static/index.html?demo` in any browser.
 
