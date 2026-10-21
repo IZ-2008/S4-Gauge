@@ -46,16 +46,26 @@ With the engine idling and the gauge stopped (`sudo systemctl stop s4gauge`):
 
 ```bash
 cd ~/s4gauge
-python3 find_oil_did.py check    # ignition on, 10 s: tries standard PID 5C and DID F45C
-python3 find_oil_did.py scan     # engine idling, 10–45 min
-python3 find_oil_did.py watch    # next cold start, 15 min
-python3 find_oil_did.py use engine XXXX   # save the code it found
+python3 find_oil_did.py check          # ignition on, ~15 s: standard routes + can a scan work at all?
+python3 find_oil_did.py scan           # engine idling, 10–45 min (or "scan engine" if check says the cluster is silent)
+python3 find_oil_did.py watch          # next cold start, 15 min; ranks the candidates at the end
+python3 find_oil_did.py use engine XXXX                # 1-byte result (formula A-40)
+python3 find_oil_did.py use engine XXXX "<formula>"    # 2-byte result, formula from calibrate
 sudo systemctl start s4gauge
 ```
 
-`watch` ranks 1-byte candidates using the formula A-40, and also lists 2-byte values that rose steadily (their
-scale is unknown). Treat any result as a candidate until it matches a second reference. At a cold start oil should read
-about the same as coolant and intake air; when warm, compare it with a VCDS/OBDeleven reading or the cluster's oil display.
+`check` also asks the engine and cluster for their VIN using a manufacturer (UDS) request. If neither accepts it, a
+scan cannot find anything, so don't spend 45 minutes on one.
+
+`watch` (or `rank watch.csv` afterwards, even on a laptop) keeps only values that rose steadily while coolant
+warmed up, scores them by how closely they follow coolant, and flags likely coolant copies and timers. 1-byte
+values are shown as A-40. 2-byte values have an unknown scale: note the raw hex at a cold start (= outside
+temperature) and when fully warm (= a VCDS/OBDeleven or cluster reading). `read engine XXXX` shows the live raw
+value. Then `calibrate RAW1 TEMP1 RAW2 TEMP2` gives the formula for `use`.
+
+Treat any result as a candidate until it passes: cold start ≈ coolant ≈ intake air; warms more slowly than
+coolant; matches a second reference when warm. The gauge hides oil temperature if it hasn't had a good reading
+for 5 s, or if a reading is outside -40…170 °C, so a frozen or nonsense number is never shown as live.
 
 The finder only reads (UDS service 22); it never writes to the car. Use it parked, not while driving.
 

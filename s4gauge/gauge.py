@@ -42,6 +42,17 @@ PIDS = {
 
 state = {"values": {}, "meta": {}, "status": "starting", "ts": 0}
 
+# Oil readings older than this are removed, so the phone shows "No data" instead of a
+# frozen number that looks live. Values outside the range are never shown at all.
+OIL_KEYS = ("oil", "oil_std")
+OIL_STALE_S = 5
+OIL_RANGE_C = (-40, 170)
+
+
+def drop_oil():
+    for key in OIL_KEYS:
+        state["values"].pop(key, None)
+
 
 def formula(expr):
     """Turn a config formula like 'A-40' or '(A*256+B)/10' into a decoder."""
@@ -87,20 +98,39 @@ def poll_loop(port):
                 state["meta"]["oil"] = {"label": "Oil temp", "unit": "°C"}
             state["status"] = f"live ({len(state['meta'])} channels)"
             last = {}
+            good_at = {}  # key -> monotonic time of its last good reading
+            warned = False
             while True:
                 now = time.monotonic()
                 for key, (pid, _, _, fn, every) in active.items():
                     if now - last.get(key, 0) >= every:
                         d = elm.request(ENGINE_TX, ENGINE_RX, "01" + pid)
                         if d:
-                            state["values"][key] = round(fn(d), 2)
+                            value = round(fn(d), 2)
+                            # An impossible oil temperature counts as no reading.
+                            if key not in OIL_KEYS or OIL_RANGE_C[0] <= value <= OIL_RANGE_C[1]:
+                                state["values"][key] = value
+                                good_at[key] = time.monotonic()
                             state["ts"] = time.monotonic()
                         last[key] = now
                 if oil_fn and now - last.get("oil", 0) >= 1.0:
                     d = elm.request(oil["tx"], oil["rx"], oil["request"])
                     if d:
-                        state["values"]["oil"] = round(oil_fn(d), 1)
+                        try:
+                            value = round(oil_fn(d), 1)
+                        except (IndexError, ZeroDivisionError):
+                            value = None  # reply shorter than the formula expects
+                        if value is not None and OIL_RANGE_C[0] <= value <= OIL_RANGE_C[1]:
+                            state["values"]["oil"] = value
+                            good_at["oil"] = time.monotonic()
+                        elif not warned:
+                            print(f"oil reading {value} from raw {d} ignored (outside {OIL_RANGE_C} °C)"
+                                  " - check the formula in config.json", flush=True)
+                            warned = True
                     last["oil"] = now
+                for key in OIL_KEYS:
+                    if key in state["values"] and time.monotonic() - good_at.get(key, 0) > OIL_STALE_S:
+                        del state["values"][key]
                 v = state["values"]
                 if "map" in v and "baro" in v:
                     v["boost"] = round((v["map"] - v["baro"]) * 0.145038, 1)  # psi
@@ -108,6 +138,7 @@ def poll_loop(port):
                 if time.monotonic() - state["ts"] > 10:
                     raise RuntimeError("no data for 10 s - ignition off?")
         except Exception as exc:  # adapter unplugged, ignition off, etc.
+            drop_oil()  # never leave an old oil number on screen while reconnecting
             state["status"] = f"error: {exc} - retrying"
             time.sleep(3)
 
