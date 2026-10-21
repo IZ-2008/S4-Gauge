@@ -58,16 +58,21 @@ class ELM327:
         after the service+PID echo, or None. Single-frame replies only (<= 7 bytes)."""
         self.set_header(tx)
         service = int(req[:2], 16)
-        echo_len = len(req) // 2  # bytes of positive-response echo: service + PID/DID
+        # A positive reply repeats the request: service+0x40, then the PID/DID bytes.
+        echo = [service + 0x40] + list(bytes.fromhex(req[2:]))
         for line in self.cmd(req + "1", wait=wait):  # trailing '1' = return after 1 reply
             tok = line.split()
             if len(tok) < 3 or tok[0] != rx or not all(set(t) <= HEX for t in tok):
                 continue
-            data = [int(t, 16) for t in tok[2:]]  # tok[1] is the ISO-TP length byte
-            if data[0] == service + 0x40:
-                return data[echo_len:]
-            if data[0] == 0x7F:
-                return None  # negative response: DID/PID not supported
+            pci = int(tok[1], 16)  # ISO-TP length byte
+            if pci > 7:
+                continue  # multi-frame reply: not supported by this minimal driver
+            # Keep exactly `pci` bytes: some adapters also print the ECU's padding bytes.
+            data = [int(t, 16) for t in tok[2:2 + pci]]
+            if data[:len(echo)] == echo:
+                return data[len(echo):]
+            # Anything else (negative response 7F, or a late reply to an earlier
+            # request) is not an answer to THIS request.
         return None
 
     def close(self):

@@ -46,11 +46,16 @@ With the engine idling and the gauge stopped (`sudo systemctl stop s4gauge`):
 
 ```bash
 cd ~/s4gauge
+python3 find_oil_did.py check    # ignition on, 10 s: tries standard PID 5C and DID F45C
 python3 find_oil_did.py scan     # engine idling, 10–45 min
 python3 find_oil_did.py watch    # next cold start, 15 min
 python3 find_oil_did.py use engine XXXX   # save the code it found
 sudo systemctl start s4gauge
 ```
+
+`watch` ranks 1-byte candidates using the formula A-40, and also lists 2-byte values that rose steadily (their
+scale is unknown). Treat any result as a candidate until it matches a second reference. At a cold start oil should read
+about the same as coolant and intake air; when warm, compare it with a VCDS/OBDeleven reading or the cluster's oil display.
 
 The finder only reads (UDS service 22); it never writes to the car. Use it parked, not while driving.
 
